@@ -1,0 +1,281 @@
+---
+title: "Yara Digital Ag Solutions – FarmX Case Study"
+author: "Doc Anthony"
+date: '2022-07-31'
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(gtsummary)
+
+```
+
+## Load and Assess the Data
+
+```{r}
+
+df <- read.csv("CropProductionStatistics.csv")
+
+```
+
+Let's view the shape of the data as well as its data types
+
+```{r}
+glimpse(df)
+
+```
+
+Let's see the number of unique values in each variable.
+
+```{r}
+
+sapply(df[1:5], \(x) {
+  unique(x) %>% length()
+})
+
+```
+
+Are there any missing values?
+
+```{r}
+
+sapply(df, \(x) sum(is.na(x)))
+
+```
+
+The values in season?
+
+```{r}
+
+unique(df$Season)
+
+```
+
+Are there productions every season?
+
+```{r}
+
+df %>% group_by(Season) %>% summarise(missing = sum(is.na(Production)))
+
+df %>% na.omit() %>% 
+  group_by(Season) %>% 
+  summarise(missing = sum(is.na(Production)),
+            zero_prod = sum(Production == 0),
+            n = n()
+            )
+
+```
+
+
+## Clean the Data
+
+
+- Remove the 3730 rows (1.51%) with missing `Production` value.
+- Remove the 3523 rows (1.43%) where there was no Production i.e. zero (0).
+- Trim the white spaces in `Season`.
+
+```{r}
+
+# remove the rows with missing Production
+# trim the extra spaces in Season
+# Convert chars to factors
+df_clean <- df %>% filter(!is.na(Production), Production != 0) %>% 
+  mutate(
+    Season = str_trim(Season)
+  )
+
+```
+
+
+
+## State (Region) and Crop Production
+
+
+```{r}
+
+top_10 <- df_clean %>% 
+  # filter(Season != "Whole Year") %>%
+  group_by(State_Name) %>%
+  summarise(
+    median = median(Production)
+  ) %>% 
+  arrange(desc(median)) %>% 
+  top_n(10) 
+
+top_10 %>%
+  ggplot(aes(reorder(State_Name, median), median)) +
+  geom_col(fill = "#0C7BDC") +
+  coord_flip() +
+  labs(title = "Ten States with Highest Production", 
+       y = "Average Production (Median)", x = "")
+
+
+```
+
+
+Insight: 10 states with the highest crop production are Goa, Haryana, Gujarat, Punjab, Maharashtra, Telangana, Kerata, Andhra Pradesh, Jharkhand and Tamil Nadu.
+
+
+### Important Districts Among the Top 10 States
+
+Insight: On average, Production is highest in NAWANSHAHR District in Punjab State.
+
+```{r}
+
+df_clean %>% 
+  filter(State_Name %in% top_10$State_Name) %>% 
+  group_by(District_Name) %>%
+  summarise(
+    median = median(Production)
+  ) %>%
+  top_n(10) %>%
+  ggplot(aes(reorder(District_Name, median), median)) +
+  geom_col(fill = "#0C7BDC") +
+  labs(title = "In the Top 10 States, Production is highest in Winter", 
+       y = "Average Production (Median)", x = "") +
+  coord_flip()
+```
+
+
+### Season and Crop Production
+
+```{r}
+
+df_clean %>% select(Season, Area, Production) %>%
+  mutate(
+    Production_per_area = round(Production / Area, 2) 
+  ) %>%
+  select(-Area) %>%
+  tbl_summary(
+    by = "Season",
+    type = all_continuous() ~ "continuous2",
+    statistic = all_continuous() ~ c("{mean} ({sd})",
+                                     "{median} ({p25}, {p75})", 
+                                     "{min}, {max}")
+    ) %>%
+  add_p()
+
+```
+
+Insight: Production is highest in Winter.
+
+```{r}
+
+df_clean %>% 
+  # filter(Season != "Whole Year") %>% 
+  group_by(Season) %>%
+  summarise(
+    median = median(Production)
+  ) %>%
+  ungroup() %>%
+  ggplot(aes(reorder(Season, median), median)) +
+  # use color-blind friendly color
+  geom_col(fill = "#0C7BDC") +
+  labs(title = "On Average, Production is highest in Winter", 
+       y = "Average Production (Median)", x = "Season")
+```
+
+Among the top 10 states, production is still highest in winter
+
+```{r}
+
+df_clean %>% 
+  filter(State_Name %in% top_10$State_Name) %>% 
+  group_by(Season) %>%
+  summarise(
+    median = median(Production)
+  ) %>%
+  ungroup() %>%
+  ggplot(aes(reorder(Season, median), median)) +
+  # use color-blind friendly color
+  geom_col(fill = "#0C7BDC") +
+  labs(title = "In the Top 10 States, Production is highest in Winter", 
+       y = "Average Production (Median)", x = "Season")
+```
+
+
+## Crops and Production
+
+Insight: The Top 5 crops are coconut, wheat, total foodgrain, sugar and rubber.
+
+```{r}
+
+df_clean %>% 
+  group_by(Crop) %>%
+  summarise(
+    median = median(Production)
+  ) %>%
+  top_n(10) %>%
+  ggplot(aes(reorder(Crop, median), median)) +
+  geom_col(fill = "#0C7BDC") +
+  labs(title = "The top 10 crops", 
+       y = "Average Production (Median)", x = "") +
+  coord_flip()
+
+```
+
+
+### 10 5 crops by State and Season
+
+
+```{r}
+
+top_5_crops <- df_clean %>% 
+  group_by(Crop) %>%
+  summarise(
+    median = median(Production)
+  ) %>%
+  top_n(5) %>% select(Crop)
+
+top_5_crops_in_top_10_states <-  df_clean %>% 
+  filter(State_Name %in% top_10$State_Name, Crop %in% top_5_crops$Crop)
+  
+top_5_crops_in_top_10_states %>%
+  group_by(State_Name, Crop) %>%
+  summarise(
+    median = median(Production)
+  ) %>%
+  top_n(10)
+
+top_5_crops_in_top_10_states %>%
+  group_by(Season, Crop) %>%
+  summarise(
+    median = median(Production)
+  ) %>%
+  top_n(10)
+
+```
+
+
+## Land Area and Production
+
+Insight: Production Increases with Land Area
+
+```{r}
+
+df_clean %>%
+  filter(State_Name %in% top_10$State_Name) %>% 
+  ggplot(aes(log(Area), log(Production))) +
+  geom_point() +
+  geom_jitter(alpha = 0.5)
+```
+
+
+### Land Area and Production with Respect to the Top 5 Crops in the Top 10 States/Region
+
+```{r}
+
+top_5_crops_in_top_10_states %>%
+  ggplot(aes(log(Area), log(Production), color = Crop)) +
+  geom_point() +
+  geom_jitter(alpha = 0.5)
+
+```
+
